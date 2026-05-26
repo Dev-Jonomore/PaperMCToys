@@ -1,0 +1,4 @@
+name: PaperToys
+version: "1.0"
+main: mc.jonomore.toy.PaperMCToy
+api-version: "26.1"
