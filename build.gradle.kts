@@ -1,6 +1,6 @@
 plugins {
     java
-    id("xyz.jpenilla.run-paper") version "2.3.1"
+    id("xyz.jpenilla.run-paper") version "3.0.2"
     kotlin("jvm") version "2.3.0"
 }
 
@@ -33,5 +33,5 @@ tasks.test {
 }
 
 tasks.runServer {
-    minecraftVersion("26.1")
+    minecraftVersion("26.1.2")
 }

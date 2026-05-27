@@ -7,6 +7,7 @@ import java.io.InputStream;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Enumeration;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -219,21 +220,94 @@ public final class FileUtils {
    */
   public static Path zipDirectory(
       Path sourceDir,
+      Path outputZip,
+      Set<Path> dirExclusions,
+      Set<String> extensionExclusions
+  ) throws IOException {
+    return zipDirectories(List.of(sourceDir), sourceDir, outputZip, dirExclusions, extensionExclusions);
+  }
+
+  /**
+   * Compresses a single directory into a zip archive with a custom relativization base.
+   *
+   * <p>Unlike {@link #zipDirectory(Path, Path, Set, Set)}, entries are relativized against
+   * {@code baseDir} rather than {@code sourceDir}. This allows the world folder name to be
+   * preserved as a prefix in the zip entries:
+   *
+   * <pre>
+   *   sourceDir = .../dimensions/minecraft/mh_world
+   *   baseDir   = .../dimensions/minecraft/
+   *   entry     = mh_world/region/r.0.0.mca   ← includes world folder name
+   * </pre>
+   *
+   * <p>Delegates to {@link #zipDirectories}.
+   *
+   * @param sourceDir           the directory to walk and compress
+   * @param baseDir             the directory to relativize entry paths against;
+   *                            must be an ancestor of {@code sourceDir}
+   * @param outputZip           the output zip path (created or overwritten)
+   * @param dirExclusions       absolute paths of directories to exclude entirely; may be null
+   * @param extensionExclusions file extensions or exact filenames to exclude; may be null
+   * @return the path of the created zip file
+   * @throws IOException if inputs are invalid, writing fails, or the archive is empty
+   */
+  public static Path zipDirectory(
+      Path sourceDir,
       Path baseDir,
       Path outputZip,
       Set<Path> dirExclusions,
       Set<String> extensionExclusions
   ) throws IOException {
-    Objects.requireNonNull(sourceDir, "Source directory cannot be null");
+    return zipDirectories(List.of(sourceDir), baseDir, outputZip, dirExclusions, extensionExclusions);
+  }
+
+  /**
+   * Compresses multiple directories into a single zip archive, relativizing all entry
+   * paths against a shared {@code baseDir}.
+   *
+   * <p>Intended for exporting a world set (overworld, nether, end) into one archive:
+   *
+   * <pre>
+   *   sourceDirs = [.../mh_world, .../mh_world_nether, .../mh_world_the_end]
+   *   baseDir    = .../dimensions/minecraft/
+   *   entries    = mh_world/region/..., mh_world_nether/region/..., etc.
+   * </pre>
+   *
+   * <p>All source directories must be direct children of {@code baseDir}; this is not
+   * validated here — callers are responsible (see {@code WorldIO.exportWorldSet}).
+   *
+   * @param sourceDirs          the directories to walk and compress; must not be empty
+   * @param baseDir             the shared ancestor used to relativize entry paths
+   * @param outputZip           the output zip path (created or overwritten)
+   * @param dirExclusions       absolute paths of directories to exclude entirely; may be null
+   * @param extensionExclusions file extensions or exact filenames to exclude; may be null
+   * @return the path of the created zip file
+   * @throws IllegalArgumentException if {@code sourceDirs} is null or empty
+   * @throws IOException if inputs are invalid, writing fails, or the archive is empty
+   */
+  public static Path zipDirectories(
+      List<Path> sourceDirs,
+      Path baseDir,
+      Path outputZip,
+      Set<Path> dirExclusions,
+      Set<String> extensionExclusions
+  ) throws IOException {
+    Objects.requireNonNull(sourceDirs, "Source directories cannot be null");
+    Objects.requireNonNull(baseDir, "Base directory cannot be null");
     Objects.requireNonNull(outputZip, "Output zip path cannot be null");
 
-    if (!Files.isDirectory(sourceDir)) {
-      throw new IOException("Source is not a directory or does not exist: " + sourceDir);
+    if (sourceDirs.isEmpty()) {
+      throw new IllegalArgumentException("Source directories cannot be empty");
     }
 
-    Path sourceDirNormalized = sourceDir.toAbsolutePath().normalize();
+    for (Path sourceDir : sourceDirs) {
+      if (!Files.isDirectory(sourceDir)) {
+        throw new IOException("Source is not a directory or does not exist: " + sourceDir);
+      }
+    }
 
-    // Normalize dir exclusions once up front
+    Path baseDirNormalized = baseDir.toAbsolutePath().normalize();
+
     Set<Path> normalizedDirExclusions = dirExclusions == null ? Set.of() : dirExclusions.stream()
         .map(p -> p.toAbsolutePath().normalize())
         .collect(Collectors.toUnmodifiableSet());
@@ -242,66 +316,65 @@ public final class FileUtils {
 
     Files.createDirectories(outputZip.getParent());
 
-    // int[] to allow mutation inside SimpleFileVisitor
     int[] filesAdded = {0};
 
     try (ZipOutputStream zos = new ZipOutputStream(new BufferedOutputStream(Files.newOutputStream(outputZip)))) {
-      Files.walkFileTree(sourceDirNormalized, new SimpleFileVisitor<>() {
+      for (Path sourceDir : sourceDirs) {
+        Path sourceDirNormalized = sourceDir.toAbsolutePath().normalize();
 
-        @Override
-        public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
-          Path normalized = dir.toAbsolutePath().normalize();
+        Files.walkFileTree(sourceDirNormalized, new SimpleFileVisitor<>() {
 
-          // SKIP_SUBTREE actually stops traversal — unlike `continue` with Files.walk
-          if (normalizedDirExclusions.contains(normalized)) {
-            return FileVisitResult.SKIP_SUBTREE;
-          }
+          @Override
+          public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) throws IOException {
+            Path normalized = dir.toAbsolutePath().normalize();
 
-          // Write explicit directory entry (except the root itself)
-          if (!normalized.equals(sourceDirNormalized)) {
-            String entryName = sourceDirNormalized.relativize(normalized).toString().replace('\\', '/') + "/";
+            if (normalizedDirExclusions.contains(normalized)) {
+              return FileVisitResult.SKIP_SUBTREE;
+            }
+
+            // Write explicit directory entry; relativize against baseDir, not sourceDir
+            String entryName = baseDirNormalized.relativize(normalized).toString().replace('\\', '/') + "/";
             zos.putNextEntry(new ZipEntry(entryName));
             zos.closeEntry();
-          }
 
-          return FileVisitResult.CONTINUE;
-        }
-
-        @Override
-        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-          String fileName = file.getFileName().toString();
-
-          // Skip files matching exact name or extension (e.g. "session.lock", ".log")
-          if (normalizedExtExclusions.stream().anyMatch(fileName::endsWith)) {
             return FileVisitResult.CONTINUE;
           }
 
-          String entryName = sourceDirNormalized.relativize(file.toAbsolutePath().normalize())
-              .toString().replace('\\', '/');
+          @Override
+          public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+            String fileName = file.getFileName().toString();
 
-          zos.putNextEntry(new ZipEntry(entryName));
-          try (BufferedInputStream in = new BufferedInputStream(Files.newInputStream(file))) {
-            in.transferTo(zos);
+            if (normalizedExtExclusions.stream().anyMatch(fileName::endsWith)) {
+              return FileVisitResult.CONTINUE;
+            }
+
+            // Relativize against baseDir → entry includes world folder name as prefix
+            String entryName = baseDirNormalized.relativize(file.toAbsolutePath().normalize())
+                .toString().replace('\\', '/');
+
+            zos.putNextEntry(new ZipEntry(entryName));
+            try (BufferedInputStream in = new BufferedInputStream(Files.newInputStream(file))) {
+              in.transferTo(zos);
+            }
+            zos.closeEntry();
+            filesAdded[0]++;
+
+            return FileVisitResult.CONTINUE;
           }
-          zos.closeEntry();
-          filesAdded[0]++;
 
-          return FileVisitResult.CONTINUE;
-        }
-
-        @Override
-        public FileVisitResult visitFileFailed(Path file, IOException exc) throws IOException {
-          throw exc; // don't silently skip unreadable files
-        }
-      });
+          @Override
+          public FileVisitResult visitFileFailed(Path file, IOException exc) throws IOException {
+            throw exc;
+          }
+        });
+      }
     }
 
     if (filesAdded[0] == 0) {
       Files.deleteIfExists(outputZip);
-      throw new IOException("Zip archive is empty (directory was empty or all files excluded): " + outputZip);
+      throw new IOException("Zip archive is empty (all directories were empty or all files excluded): " + outputZip);
     }
 
-    // Structural verify — reopen and confirm entry count is non-zero
     try (ZipFile verify = new ZipFile(outputZip.toFile())) {
       if (verify.size() == 0) {
         throw new IOException("Zip verification failed — archive contains no entries: " + outputZip);
