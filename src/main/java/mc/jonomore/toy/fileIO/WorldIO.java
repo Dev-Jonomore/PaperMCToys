@@ -115,7 +115,7 @@ public final class WorldIO {
         .toList();
 
     // All worlds share the same parent — validate that assumption
-    Path baseDir = sourceDirs.get(0).getParent();
+    Path baseDir = sourceDirs.getFirst().getParent();
     for (Path sourceDir : sourceDirs) {
       if (!sourceDir.getParent().toAbsolutePath().normalize()
           .equals(baseDir.toAbsolutePath().normalize())) {
