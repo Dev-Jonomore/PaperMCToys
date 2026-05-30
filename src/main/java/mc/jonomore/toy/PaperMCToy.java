@@ -4,8 +4,9 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
+import mc.jonomore.toy.commands.KeyCommands;
 import mc.jonomore.toy.commands.WorldCommands;
-import net.kyori.adventure.text.minimessage.MiniMessage;
+import mc.jonomore.toy.listeners.PortalLinker;
 import org.bukkit.World;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -27,12 +28,17 @@ public class PaperMCToy extends JavaPlugin {
     String exportPath = getConfig().getString("export-dir", "C:\\Users\\jaduv\\Documents\\TestServerFiles\\Worlds");
     exportDir = Paths.get(exportPath);
     worldManager = new BukkitWorldPipeline(this, exportDir);
-    LiteralCommandNode<CommandSourceStack> toyCommands = Commands.literal("toy").then(WorldCommands.createCommand(this)).build();
+    LiteralCommandNode<CommandSourceStack> toyCommands = Commands.literal("toy")
+      .then(WorldCommands.createCommand(this))
+      .then(KeyCommands.createCommand(this))
+      .build();
     getLifecycleManager().registerEventHandler(
         LifecycleEvents.COMMANDS,
         commands -> commands.registrar().register(
             toyCommands
-        ));
+        )
+    );
+    getServer().getPluginManager().registerEvents(new PortalLinker(this), this);
   }
 
   @Override

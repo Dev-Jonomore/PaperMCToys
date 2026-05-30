@@ -9,6 +9,7 @@ import mc.jonomore.toy.PaperMCToy;
 import mc.jonomore.toy.fileIO.FileUtils;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
+import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
 
@@ -29,13 +30,31 @@ public class WorldCommands {
               ));
 
             return Command.SINGLE_SUCCESS;
-          }))
+          })
+        )
         .executes(ctx -> {
           plugin.setOverworld(new WorldCreator("test_world").createWorld());
           if (plugin.getOverworld() != null)
             ctx.getSource().getSender().sendMessage(MiniMessage.miniMessage().deserialize(
               PaperMCToy.PREFIX + "Successfully created world " + plugin.getOverworld().getName() + '!'
             ));
+          return Command.SINGLE_SUCCESS;
+        })
+      )
+      .then(Commands.literal("create-all")
+        .executes(ctx -> {
+          plugin.setOverworld(new WorldCreator(new NamespacedKey("toy", "overworld")).seed(67).createWorld());
+          plugin.setNether(new WorldCreator(new NamespacedKey("toy", "nether")).environment(World.Environment.NETHER).seed(67).createWorld());
+          plugin.setEnd(new WorldCreator(new NamespacedKey("toy", "end")).environment(World.Environment.THE_END).seed(67).createWorld());
+          if (
+            plugin.getOverworld() != null &&
+            plugin.getNether() != null &&
+            plugin.getEnd() != null
+          ) {
+            ctx.getSource().getSender().sendMessage(MiniMessage.miniMessage().deserialize(
+              PaperMCToy.PREFIX + "Successfully created toy worlds!"
+            ));
+          }
           return Command.SINGLE_SUCCESS;
         })
       )
