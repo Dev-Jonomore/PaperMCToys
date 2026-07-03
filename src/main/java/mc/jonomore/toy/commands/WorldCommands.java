@@ -7,16 +7,19 @@ import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import mc.jonomore.toy.PaperMCToy;
 import mc.jonomore.toy.fileIO.FileUtils;
-import net.kyori.adventure.key.Key;
 import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.bukkit.Bukkit;
 import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
 
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.nio.file.Files;
+import java.util.Set;
+import java.util.logging.Level;
 
 public class WorldCommands {
   public static LiteralArgumentBuilder<CommandSourceStack> createCommand(PaperMCToy plugin) {
@@ -131,6 +134,83 @@ public class WorldCommands {
             return Command.SINGLE_SUCCESS;
           })
         )
+      )
+      .then(Commands.literal("test-save-zip")
+        .executes(ctx -> {
+          Bukkit.getScheduler().runTaskAsynchronously(plugin, () -> {
+            try {
+              Path worldDir = Bukkit.getWorldContainer().toPath().resolve("world");
+              Path dimensionsDir = worldDir.resolve("dimensions/minecraft");
+
+              // --- 1. Test: single world zip with explicit baseDir (5-arg) ---
+              // entries should be: toy_overworld/region/..., toy_overworld/level.dat, etc.
+              Path singleZip = plugin.getExportDir().resolve("test_single.zip");
+              FileUtils.zipDirectory(
+                plugin.getOverworld().getWorldPath(),  // sourceDir
+                dimensionsDir,                          // baseDir → entries include folder name
+                singleZip,
+                null,
+                Set.of("session.lock", "uid.dat")
+              );
+              plugin.getLogger().info("[test] single zip OK: " + singleZip);
+              inspectZip(plugin, singleZip);
+
+              // --- 2. Test: multi-world zip (zipDirectories) ---
+              // entries should be: toy_overworld/..., toy_nether/..., toy_end/...
+              Path multiZip = plugin.getExportDir().resolve("test_multi.zip");
+              FileUtils.zipDirectories(
+                List.of(
+                  plugin.getOverworld().getWorldPath(),
+                  plugin.getNether().getWorldPath(),
+                  plugin.getEnd().getWorldPath()
+                ),
+                dimensionsDir,
+                multiZip,
+                null,
+                Set.of("session.lock", "uid.dat")
+              );
+              plugin.getLogger().info("[test] multi zip OK: " + multiZip);
+              inspectZip(plugin, multiZip);
+
+              // --- 3. Test: what SHOULD work but DOESN'T yet ---
+              // Player .dat files live at world/players/data/<uuid>.dat
+              // They are NOT under dimensionsDir, so zipDirectories can't include them.
+              // This test demonstrates the limitation:
+              Path playerDataDir = worldDir.resolve("players/data");
+              if (Files.isDirectory(playerDataDir)) {
+                try (var stream = Files.list(playerDataDir)) {
+                  List<Path> datFiles = stream
+                    .filter(p -> p.toString().endsWith(".dat"))
+                    .toList();
+                  plugin.getLogger().info("[test] Found " + datFiles.size() + " .dat files in players/data/");
+                  plugin.getLogger().info("[test] These CANNOT be added to the world zip via zipDirectories — needs ZipSource.");
+                  // Attempting zipDirectories with a file path would throw:
+                  //   IOException: Source is not a directory or does not exist: .../abc123.dat
+                  // Attempting zipDirectories with playerDataDir + dimensionsDir as baseDir would throw:
+                  //   IllegalArgumentException from relativize() — playerDataDir is not under dimensionsDir
+                }
+              } else {
+                plugin.getLogger().warning("[test] players/data/ doesn't exist — are any players online?");
+              }
+
+            } catch (IOException e) {
+              plugin.getLogger().log(Level.SEVERE, "[test] test-save-zip failed", e);
+            }
+          });
+          ctx.getSource().getSender().sendMessage(
+            MiniMessage.miniMessage().deserialize(PaperMCToy.PREFIX + "Running zip tests async, check console...")
+          );
+          return Command.SINGLE_SUCCESS;
+        })
       );
+  }
+
+  private static void inspectZip(PaperMCToy plugin, Path zipPath) throws IOException {
+    try (var zf = new java.util.zip.ZipFile(zipPath.toFile())) {
+      plugin.getLogger().info("[test]   entries in " + zipPath.getFileName() + ":");
+      zf.entries().asIterator().forEachRemaining(e ->
+        plugin.getLogger().info("[test]     " + e.getName())
+      );
+    }
   }
 }

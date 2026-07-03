@@ -16,11 +16,11 @@ import java.nio.file.Paths;
 public class PaperMCToy extends JavaPlugin {
   public static final String PREFIX = "<gray>[<gold>Toy<gray>] » <white>";
 
-  Path exportDir;
+  private Path exportDir;
   private World overworld;
   private World nether;
   private World end;
-  BukkitWorldPipeline worldManager;
+  private BukkitWorldPipeline worldManager;
 
   @Override
   public void onEnable() {
@@ -41,8 +41,7 @@ public class PaperMCToy extends JavaPlugin {
     getServer().getPluginManager().registerEvents(new PortalLinker(this), this);
   }
 
-  @Override
-  public void onDisable() {}
+  public Path getExportDir() { return exportDir; }
 
   public World getOverworld() { return overworld; }
   public void  setOverworld(World overworld) { this.overworld = overworld; }
