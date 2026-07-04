@@ -4,6 +4,7 @@ import com.mojang.brigadier.tree.LiteralCommandNode;
 import io.papermc.paper.command.brigadier.CommandSourceStack;
 import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
+import mc.jonomore.toy.commands.DialogCommands;
 import mc.jonomore.toy.commands.KeyCommands;
 import mc.jonomore.toy.commands.WorldCommands;
 import mc.jonomore.toy.listeners.PortalLinker;
@@ -29,6 +30,7 @@ public class PaperMCToy extends JavaPlugin {
     exportDir = Paths.get(exportPath);
     worldManager = new BukkitWorldPipeline(this, exportDir);
     LiteralCommandNode<CommandSourceStack> toyCommands = Commands.literal("toy")
+      .then(DialogCommands.createCommand())
       .then(WorldCommands.createCommand(this))
       .then(KeyCommands.createCommand(this))
       .build();
