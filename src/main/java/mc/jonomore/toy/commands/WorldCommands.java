@@ -13,17 +13,33 @@ import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.WorldCreator;
 
-
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.nio.file.Files;
 import java.util.Set;
 import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class WorldCommands {
   public static LiteralArgumentBuilder<CommandSourceStack> createCommand(PaperMCToy plugin) {
     return Commands.literal("world")
+      .then(Commands.literal("folder")
+        .executes(_ -> {
+          Logger l = plugin.getLogger();
+          l.info("Bukkit.getWorlds.getFirst.getWorldFolder() yields " +
+            Bukkit.getWorlds().getFirst().getWorldFolder().toPath().toAbsolutePath().normalize()
+          );
+          l.info("Bukkit.getWorldContainer() yields " + Bukkit.getWorldContainer().toPath().toAbsolutePath().normalize());
+          l.info("Therefore, resolving world on the above path yields " +
+            Bukkit.getWorldContainer().toPath().resolve("world").toAbsolutePath().normalize()
+          );
+          l.info("And finally, Bukkit.getServer().getLevelDirectory() yields " +
+            Bukkit.getServer().getLevelDirectory().toAbsolutePath().normalize()
+          );
+          return Command.SINGLE_SUCCESS;
+        })
+      )
       .then(Commands.literal("create")
         .then(Commands.argument("name", StringArgumentType.word())
           .executes(ctx -> {
