@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "mc.jonomore"
-version = "3.0"
+version = "3.1"
 
 repositories {
     mavenCentral()
@@ -16,7 +16,7 @@ repositories {
 }
 
 dependencies {
-    compileOnly("io.papermc.paper:paper-api:26.1.2.build.+")
+    compileOnly("io.papermc.paper:paper-api:26.3.build.143-beta")
     testImplementation(kotlin("test"))
 }
 
@@ -33,5 +33,5 @@ tasks.test {
 }
 
 tasks.runServer {
-    minecraftVersion("26.1.2")
+    minecraftVersion("26.3")
 }

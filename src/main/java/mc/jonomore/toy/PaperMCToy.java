@@ -6,6 +6,7 @@ import io.papermc.paper.command.brigadier.Commands;
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents;
 import mc.jonomore.toy.commands.DialogCommands;
 import mc.jonomore.toy.commands.KeyCommands;
+import mc.jonomore.toy.commands.PotionCommands;
 import mc.jonomore.toy.commands.WorldCommands;
 import mc.jonomore.toy.listeners.PortalLinker;
 import org.bukkit.World;
@@ -33,6 +34,7 @@ public class PaperMCToy extends JavaPlugin {
       .then(DialogCommands.createCommand())
       .then(WorldCommands.createCommand(this))
       .then(KeyCommands.createCommand(this))
+      .then(PotionCommands.create())
       .build();
     getLifecycleManager().registerEventHandler(
         LifecycleEvents.COMMANDS,
