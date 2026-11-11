@@ -1,5 +1,6 @@
 package mc.jonomore.toy.dfx;
 
+import com.destroystokyo.paper.ParticleBuilder;
 import com.github.retrooper.packetevents.PacketEvents;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityData;
 import com.github.retrooper.packetevents.protocol.entity.data.EntityDataTypes;
@@ -31,7 +32,9 @@ import io.papermc.paper.command.brigadier.Commands;
 import mc.jonomore.toy.PaperMCToy;
 import net.kyori.adventure.key.Key;
 import net.kyori.adventure.sound.Sound;
+import org.bukkit.Color;
 import org.bukkit.Location;
+import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
@@ -55,7 +58,8 @@ public final class ZParticleDeath implements Listener {
     ZParticleDeath::playOrbitalLanternsEffect,
     ZParticleDeath::playEnderSignalShatterEffect,
     ZParticleDeath::playGroundCorruptionEffect,
-    ZParticleDeath::playLightningSilhouetteEffect
+    ZParticleDeath::playLightningSilhouetteEffect,
+    ZParticleDeath::playGrimoireSingularityEffect
   );
 
   public ZParticleDeath(PaperMCToy plugin) {
@@ -84,6 +88,9 @@ public final class ZParticleDeath implements Listener {
       )
       .then(Commands.literal("silhouette")
         .executes(ctx -> dispatchCommand(ctx, ZParticleDeath::playLightningSilhouetteEffect, plugin))
+      )
+      .then(Commands.literal("grimoire")
+        .executes(ctx -> dispatchCommand(ctx, ZParticleDeath::playGrimoireSingularityEffect, plugin))
       );
   }
 
@@ -112,14 +119,25 @@ public final class ZParticleDeath implements Listener {
   private static final int IDX_LEFT_ROTATION = 13;
   private static final int IDX_BRIGHTNESS = 16;
   private static final int IDX_BLOCK_STATE = 23; // BlockDisplay block state index (1.20.2+)
-  private static final int IDX_EYE_ITEM = 8;     // EyeOfEnder item stack index
+  private static final int IDX_DISPLAY_ITEM = 23; // ItemDisplay item stack index
+  private static final int IDX_EYE_ITEM = 8;    // EyeOfEnder item stack index
 
   // Pre-cached PacketEvents block state IDs
   private static final int AMETHYST_STATE = WrappedBlockState.getDefaultState(StateTypes.AMETHYST_CLUSTER).getGlobalId();
   private static final int SOUL_LANTERN_STATE = WrappedBlockState.getDefaultState(StateTypes.SOUL_LANTERN).getGlobalId();
   private static final int CRYING_OBSIDIAN_STATE = WrappedBlockState.getDefaultState(StateTypes.CRYING_OBSIDIAN).getGlobalId();
   private static final int SCULK_STATE = WrappedBlockState.getDefaultState(StateTypes.SCULK).getGlobalId();
+  private static final int END_PORTAL_FRAME_STATE = WrappedBlockState.getDefaultState(StateTypes.END_PORTAL_FRAME).getGlobalId();
   private static final int FULL_BRIGHT = (15 << 4) | (15 << 20);
+
+  // Bukkit particle pieces for the Grimoire Singularity hybrid
+  private static final ParticleBuilder trailBuilder = Particle.TRAIL.builder();
+  private static final ParticleBuilder flashBuilder = Particle.FLASH.builder();
+  private static final ParticleBuilder dustTransitionBuilder = Particle.DUST_COLOR_TRANSITION.builder();
+  private static final Color royalPurple = Color.fromRGB(155, 48, 255);
+  private static final Color flashPurple = Color.fromARGB(255, 185, 60, 255);
+  private static final Particle.DustTransition neonToVoidTransition =
+    new Particle.DustTransition(Color.fromRGB(255, 0, 255), Color.fromRGB(18, 0, 36), 2.4f);
 
   /**
    * 1. "3D Crystal Encasement" (PacketEvents Virtual BlockDisplay Interpolation)
@@ -437,6 +455,148 @@ public final class ZParticleDeath implements Listener {
         // Sink the glowing silhouette smoothly into the floor
         Vector3d sinkPos = new Vector3d(origin.getX(), origin.getY() - (ticks * 0.09), origin.getZ());
         bcPacket(new WrapperPlayServerEntityTeleport(standEid, sinkPos, origin.getYaw(), 0f, false), origin);
+        ticks++;
+      }
+    }.runTaskTimer(plugin, 0L, 1L);
+  }
+
+  /**
+   * 6. "The Grimoire Singularity" (PacketEvents + Particle Hybrid)
+   * Spawns a virtual Enchanted Book (ItemDisplay) at chest height that spins faster and
+   * faster while 4 virtual End Portal Frame runes (BlockDisplay) orbit inward below it,
+   * each feeding a purple Particle.TRAIL into the book. At tick 26 the book snaps into a
+   * vertical needle of light with a purple FLASH + neon-to-void dust burst.
+   */
+  public static void playGrimoireSingularityEffect(Location origin, PaperMCToy plugin) {
+    World world = origin.getWorld();
+    if (world == null) return;
+
+    int bookEid = VIRTUAL_EID.getAndIncrement();
+    int[] runeEids = {
+      VIRTUAL_EID.getAndIncrement(),
+      VIRTUAL_EID.getAndIncrement(),
+      VIRTUAL_EID.getAndIncrement(),
+      VIRTUAL_EID.getAndIncrement()
+    };
+
+    Location core = origin.clone().add(0, 1.35, 0);
+    Vector3d coreVec = new Vector3d(core.getX(), core.getY(), core.getZ());
+
+    // 1. Spawn the floating virtual Enchanted Book (ItemDisplay)
+    bcPacket(new WrapperPlayServerSpawnEntity(
+      bookEid, Optional.of(UUID.randomUUID()), EntityTypes.ITEM_DISPLAY,
+      coreVec, 0f, 0f, 0f, 0, Optional.empty()
+    ), origin);
+
+    ItemStack enchantedBook = ItemStack.builder().type(ItemTypes.ENCHANTED_BOOK).amount(1).build();
+    List<EntityData<?>> bookInitMeta = List.of(
+      new EntityData<>(IDX_INTERP_DELAY, EntityDataTypes.INT, 0),
+      new EntityData<>(IDX_TRANSFORM_DURATION, EntityDataTypes.INT, 6),
+      new EntityData<>(IDX_TELEPORT_DURATION, EntityDataTypes.INT, 2),
+      new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, new Vector3f(1.35f, 1.35f, 1.35f)),
+      new EntityData<>(IDX_LEFT_ROTATION, EntityDataTypes.QUATERNION, new Quaternion4f(0.35f, 0f, 0.35f, 0.86f)),
+      new EntityData<>(IDX_BRIGHTNESS, EntityDataTypes.INT, FULL_BRIGHT),
+      new EntityData<>(IDX_DISPLAY_ITEM, EntityDataTypes.ITEMSTACK, enchantedBook)
+    );
+    bcPacket(new WrapperPlayServerEntityMetadata(bookEid, bookInitMeta), origin);
+
+    // 2. Spawn 4 orbiting miniature End Portal Frame "Runes" (BlockDisplays)
+    for (int i = 0; i < 4; i++) {
+      bcPacket(new WrapperPlayServerSpawnEntity(
+        runeEids[i], Optional.of(UUID.randomUUID()), EntityTypes.BLOCK_DISPLAY,
+        coreVec, 0f, 0f, 0f, 0, Optional.empty()
+      ), origin);
+
+      List<EntityData<?>> runeMeta = List.of(
+        new EntityData<>(IDX_TELEPORT_DURATION, EntityDataTypes.INT, 2),
+        new EntityData<>(IDX_TRANSLATION, EntityDataTypes.VECTOR3F, new Vector3f(-0.2f, -0.2f, -0.2f)),
+        new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, new Vector3f(0.4f, 0.4f, 0.4f)),
+        new EntityData<>(IDX_BRIGHTNESS, EntityDataTypes.INT, FULL_BRIGHT),
+        new EntityData<>(IDX_BLOCK_STATE, EntityDataTypes.BLOCK_STATE, END_PORTAL_FRAME_STATE)
+      );
+      bcPacket(new WrapperPlayServerEntityMetadata(runeEids[i], runeMeta), origin);
+    }
+
+    bcSound(Sound.sound(Key.key("block.enchantment_table.use"), Sound.Source.MASTER, 2.0f, .6f), core);
+    bcSound(Sound.sound(Key.key("block.beacon.activate"), Sound.Source.MASTER, 1.5f, 1.8f), core);
+
+    new BukkitRunnable() {
+      int ticks = 0;
+      float bookYaw = 0f;
+
+      @Override
+      public void run() {
+        // Phase 1 (Ticks 0 - 25): Accelerating orbital siphon
+        if (ticks <= 25) {
+          double progress = ticks / 25.0;
+          double radius = 1.45 * (1.0 - (progress * 0.75));
+          bookYaw += (8f + (ticks * 1.8f)); // Spins faster every tick
+
+          // Spin the Grimoire in place
+          bcPacket(new WrapperPlayServerEntityTeleport(bookEid, coreVec, bookYaw, 25f, false), origin);
+
+          Particle.Trail siphonTrail = new Particle.Trail(core, royalPurple, 7);
+
+          for (int i = 0; i < 4; i++) {
+            double angle = (ticks * 0.28) + (i * (Math.PI / 2.0));
+            double rx = origin.getX() + Math.cos(angle) * radius;
+            double ry = origin.getY() + 0.35 + (progress * 0.9);
+            double rz = origin.getZ() + Math.sin(angle) * radius;
+
+            Vector3d runePos = new Vector3d(rx, ry, rz);
+            bcPacket(new WrapperPlayServerEntityTeleport(runeEids[i], runePos, (float) Math.toDegrees(-angle), 0f, false), origin);
+
+            // Feed homing purple energy ribbons from each rune straight into the spinning book
+            Location runeLoc = new Location(world, rx, ry, rz);
+            trailBuilder.location(runeLoc)
+              .offset(0, 0, 0)
+              .count(1).speed(0.0)
+              .data(siphonTrail)
+              .receivers(32)
+              .spawn();
+          }
+
+          if (ticks % 5 == 0) {
+            bcSound(Sound.sound(Key.key("entity.illusioner.prepare_blindness"), Sound.Source.MASTER, .9f, .8f + (float) progress), core);
+          }
+        }
+
+        // Phase 2 (Tick 26): Destroy runes & stretch the book into a vertical singularity beam
+        if (ticks == 26) {
+          bcPacket(new WrapperPlayServerDestroyEntities(runeEids), origin);
+
+          List<EntityData<?>> snapMeta = List.of(
+            new EntityData<>(IDX_INTERP_DELAY, EntityDataTypes.INT, 0),
+            new EntityData<>(IDX_TRANSFORM_DURATION, EntityDataTypes.INT, 4), // 4-tick violent snap
+            new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, new Vector3f(0.02f, 3.8f, 0.02f))
+          );
+          bcPacket(new WrapperPlayServerEntityMetadata(bookEid, snapMeta), origin);
+
+          // Blinding purple singularity flash + heavy bass implosion
+          flashBuilder.location(core)
+            .offset(0, 0, 0)
+            .count(1).speed(0.0)
+            .data(flashPurple)
+            .receivers(32)
+            .spawn();
+          dustTransitionBuilder.location(core)
+            .offset(.45, .65, .45)
+            .count(30).speed(.05)
+            .data(neonToVoidTransition)
+            .receivers(32)
+            .spawn();
+
+          bcSound(Sound.sound(Key.key("entity.warden.sonic_boom"), Sound.Source.MASTER, 1.4f, 1.5f), core);
+          bcSound(Sound.sound(Key.key("item.trident.thunder"), Sound.Source.MASTER, 1.2f, 1.7f), core);
+        }
+
+        // Phase 3 (Tick 31): Clean up the virtual book entity
+        if (ticks >= 31) {
+          bcPacket(new WrapperPlayServerDestroyEntities(bookEid), origin);
+          this.cancel();
+          return;
+        }
+
         ticks++;
       }
     }.runTaskTimer(plugin, 0L, 1L);
