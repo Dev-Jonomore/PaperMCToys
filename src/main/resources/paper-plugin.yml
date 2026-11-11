@@ -2,3 +2,9 @@ name: PaperToys
 version: "3.0"
 main: mc.jonomore.toy.PaperMCToy
 api-version: "26.1"
+dependencies:
+  server:
+    packetevents:
+      load: BEFORE
+      required: true
+      join-classpath: true

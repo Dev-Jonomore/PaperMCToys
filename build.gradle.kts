@@ -13,10 +13,15 @@ repositories {
         name = "papermc-repo"
         url = uri("https://repo.papermc.io/repository/maven-public/")
     }
+    maven {
+        name = "codemc-releases"
+        url = uri("https://repo.codemc.io/repository/maven-releases/")
+    }
 }
 
 dependencies {
     compileOnly("io.papermc.paper:paper-api:26.3.build.143-beta")
+    compileOnly("com.github.retrooper:packetevents-spigot:2.14.0")
     testImplementation(kotlin("test"))
 }
 
@@ -34,4 +39,7 @@ tasks.test {
 
 tasks.runServer {
     minecraftVersion("26.3")
+    downloadPlugins {
+        modrinth("packetevents", "2.14.0+spigot")
+    }
 }
