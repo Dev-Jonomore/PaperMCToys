@@ -8,6 +8,10 @@ import mc.jonomore.toy.commands.DialogCommands;
 import mc.jonomore.toy.commands.KeyCommands;
 import mc.jonomore.toy.commands.PotionCommands;
 import mc.jonomore.toy.commands.WorldCommands;
+import mc.jonomore.toy.dfx.PurpleDeath;
+import mc.jonomore.toy.dfx.RandomDeath;
+import mc.jonomore.toy.dfx.SoulDeath;
+import mc.jonomore.toy.dfx.ZParticleDeath;
 import mc.jonomore.toy.listeners.PortalLinker;
 import org.bukkit.World;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -35,6 +39,9 @@ public class PaperMCToy extends JavaPlugin {
       .then(WorldCommands.createCommand(this))
       .then(KeyCommands.createCommand(this))
       .then(PotionCommands.create())
+      .then(SoulDeath.createCommand(this))
+      .then(PurpleDeath.createCommand(this))
+      .then(ZParticleDeath.createCommand(this))
       .build();
     getLifecycleManager().registerEventHandler(
         LifecycleEvents.COMMANDS,
@@ -43,6 +50,7 @@ public class PaperMCToy extends JavaPlugin {
         )
     );
     getServer().getPluginManager().registerEvents(new PortalLinker(this), this);
+    getServer().getPluginManager().registerEvents(new RandomDeath(this), this);
   }
 
   public Path getExportDir() { return exportDir; }
