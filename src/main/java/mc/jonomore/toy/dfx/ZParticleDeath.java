@@ -32,11 +32,14 @@ import io.papermc.paper.command.brigadier.Commands;
 import mc.jonomore.toy.PaperMCToy;
 import net.kyori.adventure.key.Key;
 import net.kyori.adventure.sound.Sound;
+import org.bukkit.Bukkit;
 import org.bukkit.Color;
 import org.bukkit.Location;
+import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.data.BlockData;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -59,7 +62,8 @@ public final class ZParticleDeath implements Listener {
     ZParticleDeath::playEnderSignalShatterEffect,
     ZParticleDeath::playGroundCorruptionEffect,
     ZParticleDeath::playLightningSilhouetteEffect,
-    ZParticleDeath::playGrimoireSingularityEffect
+    ZParticleDeath::playGrimoireSingularityEffect,
+    ZParticleDeath::playGrapeBunchEffect
   );
 
   public ZParticleDeath(PaperMCToy plugin) {
@@ -91,6 +95,9 @@ public final class ZParticleDeath implements Listener {
       )
       .then(Commands.literal("grimoire")
         .executes(ctx -> dispatchCommand(ctx, ZParticleDeath::playGrimoireSingularityEffect, plugin))
+      )
+      .then(Commands.literal("grape")
+        .executes(ctx -> dispatchCommand(ctx, ZParticleDeath::playGrapeBunchEffect, plugin))
       );
   }
 
@@ -128,7 +135,18 @@ public final class ZParticleDeath implements Listener {
   private static final int CRYING_OBSIDIAN_STATE = WrappedBlockState.getDefaultState(StateTypes.CRYING_OBSIDIAN).getGlobalId();
   private static final int SCULK_STATE = WrappedBlockState.getDefaultState(StateTypes.SCULK).getGlobalId();
   private static final int END_PORTAL_FRAME_STATE = WrappedBlockState.getDefaultState(StateTypes.END_PORTAL_FRAME).getGlobalId();
+  private static final int GRAPE_STATE = WrappedBlockState.getDefaultState(StateTypes.PURPLE_CONCRETE).getGlobalId();
+  private static final int GRAPE_BLOOM_STATE = WrappedBlockState.getDefaultState(StateTypes.PURPLE_CONCRETE_POWDER).getGlobalId();
+  private static final int GRAPE_STEM_STATE = WrappedBlockState.getDefaultState(StateTypes.SPRUCE_PLANKS).getGlobalId();
+  private static final int GRAPE_LEAF_STATE = WrappedBlockState.getDefaultState(StateTypes.MOSS_BLOCK).getGlobalId();
   private static final int FULL_BRIGHT = (15 << 4) | (15 << 20);
+
+  // Bukkit particle pieces for the Grape Bunch juice
+  private static final ParticleBuilder grapeDustBuilder = Particle.DUST.builder();
+  private static final ParticleBuilder fallingDustBuilder = Particle.FALLING_DUST.builder();
+  private static final Particle.DustOptions grapeJuice = new Particle.DustOptions(Color.fromRGB(111, 45, 168), 0.9f);
+  private static final Particle.DustOptions grapePuddle = new Particle.DustOptions(Color.fromRGB(78, 22, 110), 1.3f);
+  private static final BlockData grapeDripData = Bukkit.createBlockData(Material.PURPLE_CONCRETE_POWDER);
 
   // Bukkit particle pieces for the Grimoire Singularity hybrid
   private static final ParticleBuilder trailBuilder = Particle.TRAIL.builder();
@@ -597,6 +615,187 @@ public final class ZParticleDeath implements Listener {
           return;
         }
 
+        ticks++;
+      }
+    }.runTaskTimer(plugin, 0L, 1L);
+  }
+
+  // Grape bunch shape: grid offsets per layer, top layer first, tapering to a single grape
+  private static final int[][] GRAPE_DIAMOND = {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+  private static final int[][] GRAPE_SQUARE = {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {1, -1}, {-1, 1}, {-1, -1}};
+  private static final int[][] GRAPE_SINGLE = {{0, 0}};
+  private static final int[][][] GRAPE_LAYERS = {GRAPE_DIAMOND, GRAPE_SQUARE, GRAPE_DIAMOND, GRAPE_SINGLE, GRAPE_SINGLE};
+  private static final float GRAPE_SPACING = 0.3f;
+  private static final float GRAPE_SIZE = 0.26f;
+
+  /**
+   * 7. "Grape Bunch" (Virtual BlockDisplay voxel bunch + juice particles)
+   * Grows a hanging bunch of 21 purple voxel grapes with a brown stem and a green leaf
+   * where the victim stood, then pops the grapes one by one from the tip upward with
+   * rising squishy pops, dripping purple juice into a puddle. Ends with a burp.
+   */
+  public static void playGrapeBunchEffect(Location origin, PaperMCToy plugin) {
+    World world = origin.getWorld();
+    if (world == null) return;
+
+    ThreadLocalRandom rng = ThreadLocalRandom.current();
+
+    // Grape centers, ordered top layer -> bottom tip
+    List<Location> grapes = new ArrayList<>();
+    for (int layer = 0; layer < GRAPE_LAYERS.length; layer++) {
+      double y = 1.9 - (layer * GRAPE_SPACING);
+      for (int[] off : GRAPE_LAYERS[layer]) {
+        grapes.add(origin.clone().add(
+          off[0] * GRAPE_SPACING + rng.nextDouble(-.03, .03),
+          y + rng.nextDouble(-.03, .03),
+          off[1] * GRAPE_SPACING + rng.nextDouble(-.03, .03)
+        ));
+      }
+    }
+
+    int grapeCount = grapes.size();
+    int[] eids = new int[grapeCount + 2];
+    for (int i = 0; i < eids.length; i++) eids[i] = VIRTUAL_EID.getAndIncrement();
+    int stemEid = eids[grapeCount];
+    int leafEid = eids[grapeCount + 1];
+
+    Vector3f zero = new Vector3f(0f, 0f, 0f);
+
+    // Tick 0: Spawn every grape at scale 0 (they grow from their centers on tick 1)
+    for (int i = 0; i < grapeCount; i++) {
+      Location g = grapes.get(i);
+      bcPacket(new WrapperPlayServerSpawnEntity(
+        eids[i], Optional.of(UUID.randomUUID()), EntityTypes.BLOCK_DISPLAY,
+        new Vector3d(g.getX(), g.getY(), g.getZ()), 0f, 0f, 0f, 0, Optional.empty()
+      ), origin);
+      List<EntityData<?>> meta = List.of(
+        // Mostly smooth grapes with the odd dusty-bloom one
+        new EntityData<>(IDX_BLOCK_STATE, EntityDataTypes.BLOCK_STATE, rng.nextInt(4) == 0 ? GRAPE_BLOOM_STATE : GRAPE_STATE),
+        new EntityData<>(IDX_BRIGHTNESS, EntityDataTypes.INT, FULL_BRIGHT),
+        new EntityData<>(IDX_TRANSLATION, EntityDataTypes.VECTOR3F, zero),
+        new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, zero)
+      );
+      bcPacket(new WrapperPlayServerEntityMetadata(eids[i], meta), origin);
+    }
+
+    // Stem poking out of the top of the bunch, and a tilted leaf hanging off it
+    Vector3d stemPos = new Vector3d(origin.getX(), origin.getY() + 2.0, origin.getZ());
+    Vector3d leafPos = new Vector3d(origin.getX(), origin.getY() + 2.35, origin.getZ());
+    bcPacket(new WrapperPlayServerSpawnEntity(
+      stemEid, Optional.of(UUID.randomUUID()), EntityTypes.BLOCK_DISPLAY,
+      stemPos, 0f, 0f, 0f, 0, Optional.empty()
+    ), origin);
+    bcPacket(new WrapperPlayServerEntityMetadata(stemEid, List.of(
+      new EntityData<>(IDX_BLOCK_STATE, EntityDataTypes.BLOCK_STATE, GRAPE_STEM_STATE),
+      new EntityData<>(IDX_TRANSLATION, EntityDataTypes.VECTOR3F, zero),
+      new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, zero)
+    )), origin);
+    bcPacket(new WrapperPlayServerSpawnEntity(
+      leafEid, Optional.of(UUID.randomUUID()), EntityTypes.BLOCK_DISPLAY,
+      leafPos, 0f, 0f, 0f, 0, Optional.empty()
+    ), origin);
+    bcPacket(new WrapperPlayServerEntityMetadata(leafEid, List.of(
+      new EntityData<>(IDX_BLOCK_STATE, EntityDataTypes.BLOCK_STATE, GRAPE_LEAF_STATE),
+      new EntityData<>(IDX_TRANSLATION, EntityDataTypes.VECTOR3F, zero),
+      new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, zero),
+      new EntityData<>(IDX_LEFT_ROTATION, EntityDataTypes.QUATERNION, new Quaternion4f(0f, 0f, -0.216f, 0.976f)) // ~25 degree droop
+    )), origin);
+
+    Location top = origin.clone().add(0, 2.0, 0);
+    bcSound(Sound.sound(Key.key("block.sweet_berry_bush.pick_berries"), Sound.Source.MASTER, 2.0f, .6f), top);
+    bcSound(Sound.sound(Key.key("block.cave_vines.pick_berries"), Sound.Source.MASTER, 2.0f, .8f), top);
+
+    new BukkitRunnable() {
+      static final int POP_START = 16;
+      int ticks = 0;
+
+      @Override
+      public void run() {
+        // Tick 1: The whole bunch swells into place over 6 ticks
+        if (ticks == 1) {
+          float half = -GRAPE_SIZE / 2f;
+          for (int i = 0; i < grapeCount; i++) {
+            bcPacket(new WrapperPlayServerEntityMetadata(eids[i], List.of(
+              new EntityData<>(IDX_INTERP_DELAY, EntityDataTypes.INT, 0),
+              new EntityData<>(IDX_TRANSFORM_DURATION, EntityDataTypes.INT, 6),
+              new EntityData<>(IDX_TRANSLATION, EntityDataTypes.VECTOR3F, new Vector3f(half, half, half)),
+              new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, new Vector3f(GRAPE_SIZE, GRAPE_SIZE, GRAPE_SIZE))
+            )), origin);
+          }
+          bcPacket(new WrapperPlayServerEntityMetadata(stemEid, List.of(
+            new EntityData<>(IDX_INTERP_DELAY, EntityDataTypes.INT, 0),
+            new EntityData<>(IDX_TRANSFORM_DURATION, EntityDataTypes.INT, 6),
+            new EntityData<>(IDX_TRANSLATION, EntityDataTypes.VECTOR3F, new Vector3f(-0.04f, 0f, -0.04f)),
+            new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, new Vector3f(0.08f, 0.45f, 0.08f))
+          )), origin);
+          bcPacket(new WrapperPlayServerEntityMetadata(leafEid, List.of(
+            new EntityData<>(IDX_INTERP_DELAY, EntityDataTypes.INT, 0),
+            new EntityData<>(IDX_TRANSFORM_DURATION, EntityDataTypes.INT, 6),
+            new EntityData<>(IDX_TRANSLATION, EntityDataTypes.VECTOR3F, new Vector3f(0.03f, 0f, -0.16f)),
+            new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, new Vector3f(0.5f, 0.04f, 0.32f))
+          )), origin);
+        }
+
+        // Ticks 16+: Pop one grape per tick, from the bottom tip up to the top layer
+        int popped = ticks - POP_START;
+        if (popped >= 0 && popped < grapeCount) {
+          int i = grapeCount - 1 - popped;
+          Location g = grapes.get(i);
+
+          bcPacket(new WrapperPlayServerEntityMetadata(eids[i], List.of(
+            new EntityData<>(IDX_INTERP_DELAY, EntityDataTypes.INT, 0),
+            new EntityData<>(IDX_TRANSFORM_DURATION, EntityDataTypes.INT, 2),
+            new EntityData<>(IDX_TRANSLATION, EntityDataTypes.VECTOR3F, zero),
+            new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, zero)
+          )), origin);
+
+          // Juice burst where the grape was, drips falling from it, and a splat on the floor
+          grapeDustBuilder.location(g)
+            .offset(.1, .1, .1)
+            .count(6).speed(0.0)
+            .data(grapeJuice)
+            .receivers(32)
+            .spawn();
+          fallingDustBuilder.location(g)
+            .offset(.05, .05, .05)
+            .count(3).speed(0.0)
+            .data(grapeDripData)
+            .receivers(32)
+            .spawn();
+          ThreadLocalRandom r = ThreadLocalRandom.current();
+          double angle = r.nextDouble(0, 2 * Math.PI);
+          double dist = Math.sqrt(r.nextDouble(0, 1.0)) * .8;
+          grapeDustBuilder.location(origin.clone().add(Math.cos(angle) * dist, 0.05, Math.sin(angle) * dist))
+            .offset(.08, 0, .08)
+            .count(3).speed(0.0)
+            .data(grapePuddle)
+            .receivers(32)
+            .spawn();
+
+          // Squishy pops climbing in pitch as the bunch empties
+          bcSound(Sound.sound(Key.key("entity.slime.squish_small"), Sound.Source.MASTER, 1.2f, 1.1f + (popped * .04f)), g);
+          if (popped % 3 == 0) {
+            bcSound(Sound.sound(Key.key("block.honey_block.break"), Sound.Source.MASTER, .8f, 1.4f), g);
+          }
+        }
+
+        // Bare stem and leaf wither away once the last grape is gone
+        if (ticks == POP_START + grapeCount + 1) {
+          for (int eid : new int[]{stemEid, leafEid}) {
+            bcPacket(new WrapperPlayServerEntityMetadata(eid, List.of(
+              new EntityData<>(IDX_INTERP_DELAY, EntityDataTypes.INT, 0),
+              new EntityData<>(IDX_TRANSFORM_DURATION, EntityDataTypes.INT, 4),
+              new EntityData<>(IDX_SCALE, EntityDataTypes.VECTOR3F, zero)
+            )), origin);
+          }
+          bcSound(Sound.sound(Key.key("entity.player.burp"), Sound.Source.MASTER, 1.5f, .9f), top);
+        }
+
+        if (ticks >= POP_START + grapeCount + 7) {
+          bcPacket(new WrapperPlayServerDestroyEntities(eids), origin);
+          this.cancel();
+          return;
+        }
         ticks++;
       }
     }.runTaskTimer(plugin, 0L, 1L);
